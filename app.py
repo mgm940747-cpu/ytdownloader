@@ -21,7 +21,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-
 # --- Functions ---
 def update_library():
     try:
@@ -30,37 +29,53 @@ def update_library():
     except:
         return "❌ Update failed."
 
-
 def fetch_filtered_video(query):
+    # 403 Error ရှောင်ရန် User-Agent ထည့်ခြင်း
     ydl_opts = {
         'quiet': True,
         'match_filter': yt_dlp.utils.match_filter_func('duration > 300 & duration < 900'),
         'extract_flat': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        search_results = ydl.extract_info(f"ytsearch10:{query} movie recap", download=False)
-        entries = search_results.get('entries', [])
-        if entries:
-            selected = random.choice(entries)
-            return f"https://www.youtube.com/watch?v={selected['id']}"
+        try:
+            search_results = ydl.extract_info(f"ytsearch10:{query} movie recap", download=False)
+            entries = search_results.get('entries', [])
+            if entries:
+                selected = random.choice(entries)
+                return f"https://www.youtube.com/watch?v={selected['id']}"
+        except:
+            return None
     return None
 
-
-# --- Real Download Engine ---
+# --- Improved Real Download Engine (403 Error Bypass) ---
 def download_media_to_buffer(url, media_type='video', quality='720', audio_fmt='mp3'):
-    temp_name = f"temp_{random.randint(1000, 9999)}"
+    temp_id = random.randint(1000, 9999)
+    temp_name = f"download_{temp_id}"
+    
+    # YouTube က Bot ဟုတ်မဟုတ် စစ်ဆေးတာကို ကျော်ဖြတ်ရန် Headers များ
+    common_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
+        'noprogress': True,
+        'http_headers': {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+        }
+    }
 
     if media_type == 'video':
-        # အသံမပါတဲ့ Video သီးသန့်ဆွဲရန်
         ydl_opts = {
-            'format': f'bestvideo[height<={quality}][ext=mp4]',
-            'outtmpl': temp_name + '.mp4',
-            'quiet': True, 'noprogress': True,
+            **common_opts,
+            'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best',
+            'outtmpl': f"{temp_name}.%(ext)s",
+            'merge_output_format': 'mp4',
         }
-        out_file = temp_name + '.mp4'
     else:
-        # အသံဖိုင် သီးသန့်ဆွဲရန် (FFmpeg လိုအပ်ပါသည်)
         ydl_opts = {
+            **common_opts,
             'format': 'bestaudio/best',
             'outtmpl': temp_name,
             'postprocessors': [{
@@ -68,34 +83,30 @@ def download_media_to_buffer(url, media_type='video', quality='720', audio_fmt='
                 'preferredcodec': audio_fmt,
                 'preferredquality': '192',
             }],
-            'quiet': True, 'noprogress': True,
         }
-        out_file = temp_name + '.' + audio_fmt
 
-    # Download Process
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-
-    # ဖိုင်ကို ဖတ်ပြီး ပြန်ဖျက်ခြင်း (Storage မပြည့်အောင်)
-    try:
-        with open(out_file, 'rb') as f:
+    
+    # ဒေါင်းလုဒ်လုပ်ပြီးသားဖိုင်ကို ရှာဖွေခြင်း
+    downloaded_file = None
+    for f in os.listdir('.'):
+        if f.startswith(temp_name):
+            downloaded_file = f
+            break
+            
+    if downloaded_file:
+        with open(downloaded_file, 'rb') as f:
             data = f.read()
-        os.remove(out_file)
+        os.remove(downloaded_file)
         return data
-    except FileNotFoundError:
-        # အကယ်၍ format အမည်ကွဲလွဲသွားပါက ရှာဖွေပြီး ဖတ်ရန်
-        for f in os.listdir('.'):
-            if f.startswith(temp_name):
-                with open(f, 'rb') as fp:
-                    data = fp.read()
-                os.remove(f)
-                return data
-        raise Exception("Download failed or FFmpeg missing.")
+    else:
+        raise Exception("File not found. FFmpeg installation or permissions might be the issue.")
 
-
-# --- App State ---
+# --- App State Management ---
 if 'app_mode' not in st.session_state: st.session_state.app_mode = 'landing'
 if 'selected_url' not in st.session_state: st.session_state.selected_url = None
+if 'v_ready' not in st.session_state: st.session_state.v_ready = False
 
 # ---------------------------------------------------------
 # 1. LANDING PAGE
@@ -122,11 +133,10 @@ if st.session_state.app_mode == 'landing':
 elif st.session_state.app_mode == 'dashboard':
     with st.sidebar:
         st.markdown("### ⚙️ System Update")
-        st.caption("Policy ပြောင်းလဲမှုကြောင့် error တက်လျှင် Engine ကို update လုပ်ပေးပါ။")
         if st.button("🔄 Update Engine"):
             st.toast(update_library())
         st.divider()
-        st.caption("UI Version: 3.1 (Final Release)")
+        st.caption("UI Version: 3.2 (Bypass Fixed)")
 
     st.title("🎬 Download Dashboard")
 
@@ -138,73 +148,68 @@ elif st.session_state.app_mode == 'dashboard':
                 st.video(st.session_state.selected_url)
 
             with i_col:
-                with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                    info = ydl.extract_info(st.session_state.selected_url, download=False)
-                    st.markdown(f"### {info.get('title')}")
-                    mins, secs = divmod(info.get('duration'), 60)
-                    st.info(f"⏱️ Duration: {mins}m {secs}s")
-                    st.write(f"👤 Channel: {info.get('uploader')}")
+                # Video Info extraction with error handling
+                try:
+                    with yt_dlp.YoutubeDL({'quiet': True, 'user_agent': 'Mozilla/5.0'}) as ydl:
+                        info = ydl.extract_info(st.session_state.selected_url, download=False)
+                        video_title = info.get('title', 'Video')
+                        st.markdown(f"### {video_title}")
+                        mins, secs = divmod(info.get('duration', 0), 60)
+                        st.info(f"⏱️ Duration: {mins}m {secs}s")
+                except:
+                    video_title = "Video Recap"
+                    st.warning("Could not fetch full metadata, but download may still work.")
 
                 st.markdown("---")
                 genre = st.selectbox("Movie Category:", ["Trending", "Horror", "Action", "Sci-Fi", "Thriller"])
                 c1, c2 = st.columns(2)
                 if c1.button("🔍 Find Recap"):
                     st.session_state.selected_url = fetch_filtered_video(genre)
-                    # Video အသစ်ရှာရင် Download Button တွေ ပျောက်သွားအောင် Reset လုပ်ခြင်း
                     st.session_state.v_ready = False
-                    st.session_state.a_ready = False
                     st.rerun()
                 if c2.button("⏭️ Next Video"):
                     st.session_state.selected_url = fetch_filtered_video(genre)
                     st.session_state.v_ready = False
-                    st.session_state.a_ready = False
                     st.rerun()
 
             st.markdown("---")
-
-            # Download Settings
             st.subheader("📥 Download Settings")
+            
             with st.container():
                 d1, d2, d3 = st.columns(3)
                 quality = d1.selectbox("Quality:", ["1080", "720", "480"], index=1)
                 audio_fmt = d2.selectbox("Audio Format:", ["mp3", "wav", "m4a"])
-                folder_name = d3.text_input("Folder Name:", "MyMovies")
+                folder_prefix = d3.text_input("Folder Name (Prefix):", "MyMovies")
 
                 if st.button("⚡ Start High-Speed Download"):
                     try:
-                        # Step 1: Video (Real Download)
-                        v_p = st.progress(0, text="Downloading Video File...")
-                        st.session_state.v_data = download_media_to_buffer(st.session_state.selected_url, 'video',
-                                                                           quality)
-                        v_p.progress(100)
-                        st.session_state.v_ready = True
-
-                        # Step 2: Audio (Real Download)
-                        a_p = st.progress(0, text="Extracting Audio Stream...")
-                        st.session_state.a_data = download_media_to_buffer(st.session_state.selected_url, 'audio',
-                                                                           quality, audio_fmt)
-                        a_p.progress(100)
-                        st.session_state.a_ready = True
-
-                        st.success("✅ Download Ready! You can save the files below.")
+                        with st.status("Processing Download...", expanded=True) as status:
+                            st.write("Fetching video data...")
+                            st.session_state.v_data = download_media_to_buffer(st.session_state.selected_url, 'video', quality)
+                            
+                            st.write("Fetching audio data...")
+                            st.session_state.a_data = download_media_to_buffer(st.session_state.selected_url, 'audio', quality, audio_fmt)
+                            
+                            st.session_state.v_ready = True
+                            status.update(label="✅ Download Prepared!", state="complete")
                         st.balloons()
                     except Exception as e:
-                        st.error(f"Download Failed: {e}. (Make sure FFmpeg is installed)")
+                        st.error(f"Download Failed: {str(e)}")
 
-            # 'Download Ready!' အဆင့်အောင်မြင်မှသာ Save Buttons များပေါ်လာမည်
-            if st.session_state.get('v_ready') and st.session_state.get('a_ready'):
+            # --- Save Buttons (Only show when data is ready) ---
+            if st.session_state.v_ready:
                 st.divider()
+                st.success("Download Ready! Please save the files to your device.")
                 save_col1, save_col2 = st.columns(2)
 
-                # ဖိုင်အမည်များကို သန့်စင်ခြင်း (Invalid Characters ဖယ်ထုတ်ရန်)
-                safe_title = "".join(
-                    [c for c in info.get('title', 'video') if c.isalpha() or c.isdigit() or c == ' ']).rstrip()
+                # Clean Filename
+                clean_name = "".join([c for c in video_title if c.isalnum() or c==' ']).strip().replace(' ', '_')
 
                 with save_col1:
                     st.download_button(
                         label="💾 Save Video (.mp4)",
                         data=st.session_state.v_data,
-                        file_name=f"{folder_name}_{safe_title}.mp4",
+                        file_name=f"{folder_prefix}_{clean_name}.mp4",
                         mime="video/mp4",
                         use_container_width=True
                     )
@@ -213,9 +218,9 @@ elif st.session_state.app_mode == 'dashboard':
                     st.download_button(
                         label=f"💾 Save Audio (.{audio_fmt})",
                         data=st.session_state.a_data,
-                        file_name=f"{folder_name}_{safe_title}.{audio_fmt}",
+                        file_name=f"{folder_prefix}_{clean_name}.{audio_fmt}",
                         mime=f"audio/{audio_fmt}",
                         use_container_width=True
                     )
         except Exception as e:
-            st.error(f"Something went wrong: {e}")
+            st.error(f"Dashboard Error: {e}")
